@@ -1,5 +1,7 @@
 # yandex-music-cli
 
+![preview](assets/preview.jpg)
+
 Minimalist CLI manager for Yandex Music utilizing MPD (Music Player Daemon) and ncmpcpp.
 
 ## Features

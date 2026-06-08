@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MPC = ["mpc", "-h", str(Path.home() / ".config/mpd/socket")]
+MPC = ["mpc"]
 MUSIC_DIR = Path.home() / "Music" / "yandex"
 DOWNLOADER = Path.home() / ".config" / "scripts" / "yandex-music" / "downloader.py"
 STATE_FILE = Path.home() / ".config" / "scripts" / "yandex-music" / "state.json"

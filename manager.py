@@ -75,10 +75,6 @@ def init() -> None:
 
     mpc("single", "off")
     mpc("play")
-    try:
-        subprocess.run(["ncmpcpp"], stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        print("[!] ncmpcpp not found")
 
 
 def random_toggle() -> None:

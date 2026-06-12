@@ -48,14 +48,13 @@ echo "YOUR_TOKEN_HERE" > ~/.config/scripts/yandex-music/token
 MPD must expose a UNIX socket. Add the following line to `~/.config/mpd/mpd.conf`:
 
 ```
-bind_to_address "~/.config/mpd/socket"
+bind_to_address "~/.local/share/mpd/socket"
 ```
 
-Also configure `mpc` to use the same socket. Create `~/.config/mpc/config`:
+To make `mpc` and `ncmpcpp` aware of this socket, export the `MPD_HOST` variable in your shell configuration file (e.g., `~/.zshrc` or `~/.zshenv`):
 
 ```
-host = /home/diominvd/.config/mpd/socket
-port = 6600
+export MPD_HOST="$HOME/.local/share/mpd/socket"
 ```
 
 If your socket lives elsewhere, update both files accordingly.

@@ -6,13 +6,15 @@
 
 import json
 import re
+import socket
 import sys
 import time
 import urllib.request
 from pathlib import Path
 
 from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TDRC, TIT2, TPE1, TRCK
-from yandex_music import Client
+from yandex_music import Client, Track
+from yandex_music.exceptions import UnauthorizedError
 
 MUSIC_DIR = Path.home() / "Music" / "yandex"
 STATE_FILE = Path.home() / ".config" / "scripts" / "yandex-music" / "state.json"
@@ -33,13 +35,45 @@ def save_state(state: dict[str, dict]) -> None:
     STATE_FILE.write_text(json.dumps({"ids": state}, indent=2))
 
 
+# Network
+def check_network() -> None:
+    try:
+        socket.setdefaulttimeout(3)
+        socket.create_connection(("music.yandex.ru", 443))
+    except OSError:
+        sys.exit("[!] No internet connection")
+
+
+def init_client() -> Client:
+    try:
+        return Client(TOKEN_FILE.read_text().strip()).init()
+    except UnauthorizedError:
+        sys.exit(f"[!] Token expired or invalid. Update token at {TOKEN_FILE}")
+
+
 # Helpers
-def slug(track) -> str:
+def slug(track: Track) -> str:
     artists = ", ".join(a.name for a in (track.artists or []))
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", f"{artists} — {track.title}").strip()
 
 
-def write_tags(path: Path, track, index: int, total: int) -> None:
+def fetch_cover(track: Track) -> bytes | None:
+    if not track.cover_uri:
+        return None
+    try:
+        url = "https://" + track.cover_uri.replace("%%", "400x400")
+        return urllib.request.urlopen(url, timeout=10).read()
+    except Exception:
+        return None
+
+
+def apply_cover(tags: ID3, cover: bytes) -> None:
+    tags[APIC.__name__] = APIC(
+        encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover
+    )
+
+
+def write_tags(path: Path, track: Track, index: int, total: int) -> None:
     try:
         tags = ID3(path)
     except ID3NoHeaderError:
@@ -55,22 +89,12 @@ def write_tags(path: Path, track, index: int, total: int) -> None:
         tags[TALB.__name__] = TALB(encoding=3, text=album.title or "")
         if album.year:
             tags[TDRC.__name__] = TDRC(encoding=3, text=str(album.year))
-    if track.cover_uri:
-        try:
-            url = "https://" + track.cover_uri.replace("%%", "400x400")
-            tags[APIC.__name__] = APIC(
-                encoding=3,
-                mime="image/jpeg",
-                type=3,
-                desc="Cover",
-                data=urllib.request.urlopen(url, timeout=10).read(),
-            )
-        except Exception:
-            pass
+    if cover := fetch_cover(track):
+        apply_cover(tags, cover)
     tags.save(str(path))
 
 
-def download(track, index: int, total: int) -> bool:
+def download_track(track: Track, index: int, total: int) -> bool:
     path = MUSIC_DIR / f"{slug(track)}.mp3"
     if path.exists():
         return True
@@ -84,46 +108,54 @@ def download(track, index: int, total: int) -> bool:
         return False
 
 
+# Sync
+def remove_unliked(state: dict, current_ids: set) -> dict:
+    removed = {tid: meta for tid, meta in state.items() if tid not in current_ids}
+    if not removed:
+        return state
+    print(f"[*] Unliked: {len(removed)} track(s)")
+    for meta in removed.values():
+        path = MUSIC_DIR / meta["file"]
+        if path.exists():
+            path.unlink()
+            print(f"    deleted {meta['file']}")
+    return {tid: meta for tid, meta in state.items() if tid in current_ids}
+
+
+def download_queue(queue: list, state: dict, total: int) -> None:
+    for i, (index, track) in enumerate(queue, 1):
+        label = ", ".join(a.name for a in track.artists or []) + f" — {track.title}"
+        print(f"[{i}/{len(queue)}] #{index:03d} {label}")
+        if download_track(track, index, total):
+            state[str(track.id)] = {"index": index, "file": f"{slug(track)}.mp3"}
+            save_state(state)
+        time.sleep(0.3)
+
+
 # Main
 def main() -> None:
     if not TOKEN_FILE.exists():
-        sys.exit(f"No token found. Create {TOKEN_FILE}")
+        sys.exit(f"[!] No token found. Create {TOKEN_FILE}")
 
+    check_network()
     MUSIC_DIR.mkdir(parents=True, exist_ok=True)
-    client = Client(TOKEN_FILE.read_text().strip()).init()
+
+    client = init_client()
     tracks = client.users_likes_tracks().fetch_tracks()
     total = len(tracks)
     state = load_state()
 
-    # Remove unliked
     current_ids = {str(t.id) for t in tracks}
-    removed = {tid: meta for tid, meta in state.items() if tid not in current_ids}
-    if removed:
-        print(f"Unliked: {len(removed)} track(s)")
-        for tid, meta in removed.items():
-            path = MUSIC_DIR / meta["file"]
-            if path.exists():
-                path.unlink()
-                print(f"  deleted {meta['file']}")
-        state = {tid: meta for tid, meta in state.items() if tid in current_ids}
-        save_state(state)
+    state = remove_unliked(state, current_ids)
 
-    # Download new
     queue = [(i + 1, t) for i, t in enumerate(tracks) if str(t.id) not in state]
     print(f"[*] Total likes: {total}  |  Synced: {len(state)}  |  New: {len(queue)}")
 
     if not queue:
         return
 
-    for i, (index, track) in enumerate(queue, 1):
-        label = ", ".join(a.name for a in track.artists or []) + f" — {track.title}"
-        print(f"[{i}/{len(queue)}] #{index:03d} {label}")
-        if download(track, index, total):
-            state[str(track.id)] = {"index": index, "file": f"{slug(track)}.mp3"}
-            save_state(state)
-        time.sleep(0.3)
-
-    print("Done.")
+    download_queue(queue, state, total)
+    print("[*] Done.")
 
 
 if __name__ == "__main__":

@@ -21,9 +21,7 @@ TOKEN_FILE = Path.home() / ".config" / "scripts" / "yandex-music" / "token"
 # state schema: { "id": { "index": int, "file": str } }
 
 
-# ── State ─────────────────────────────────────────────────────────────────────
-
-
+# State
 def load_state() -> dict[str, dict]:
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text()).get("ids", {})
@@ -35,9 +33,7 @@ def save_state(state: dict[str, dict]) -> None:
     STATE_FILE.write_text(json.dumps({"ids": state}, indent=2))
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
+# Helpers
 def slug(track) -> str:
     artists = ", ".join(a.name for a in (track.artists or []))
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", f"{artists} — {track.title}").strip()
@@ -88,9 +84,7 @@ def download(track, index: int, total: int) -> bool:
         return False
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-
+# Main
 def main() -> None:
     if not TOKEN_FILE.exists():
         sys.exit(f"No token found. Create {TOKEN_FILE}")
@@ -101,7 +95,7 @@ def main() -> None:
     total = len(tracks)
     state = load_state()
 
-    # ── Remove unliked ────────────────────────────────────────────────────────
+    # Remove unliked
     current_ids = {str(t.id) for t in tracks}
     removed = {tid: meta for tid, meta in state.items() if tid not in current_ids}
     if removed:
@@ -114,9 +108,9 @@ def main() -> None:
         state = {tid: meta for tid, meta in state.items() if tid in current_ids}
         save_state(state)
 
-    # ── Download new ──────────────────────────────────────────────────────────
+    # Download new
     queue = [(i + 1, t) for i, t in enumerate(tracks) if str(t.id) not in state]
-    print(f"Total likes: {total}  |  Synced: {len(state)}  |  New: {len(queue)}")
+    print(f"[*] Total likes: {total}  |  Synced: {len(state)}  |  New: {len(queue)}")
 
     if not queue:
         return

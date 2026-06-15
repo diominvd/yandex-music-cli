@@ -2,21 +2,22 @@
 # /// script
 # dependencies = []
 # ///
-
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
+from utils import spinner
+
+# Constants
 MPC = ["mpc"]
 MUSIC_DIR = Path.home() / "Music" / "yandex"
 DOWNLOADER = Path.home() / ".config" / "scripts" / "yandex-music" / "downloader.py"
 STATE_FILE = Path.home() / ".config" / "scripts" / "yandex-music" / "state.json"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
+# Helpers
 def mpc(*args) -> subprocess.CompletedProcess:
     return subprocess.run(MPC + list(args), capture_output=True, text=True)
 
@@ -24,12 +25,28 @@ def mpc(*args) -> subprocess.CompletedProcess:
 def mpc_print(*args) -> None:
     result = mpc(*args)
     if result.stdout.strip():
-        print(result.stdout.split("\n")[0].strip())
+        print("[*] " + result.stdout.split("\n")[0].strip())
 
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+def run_with_spinner(msg: str, fn) -> None:
+    stop = threading.Event()
+    t = threading.Thread(target=spinner, args=(msg, stop))
+    t.start()
+    try:
+        fn()
+    finally:
+        stop.set()
+        t.join()
 
 
+def _run_downloader() -> str:
+    result = subprocess.run(
+        ["uv", "run", str(DOWNLOADER)], check=True, capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+# Commands
 def systemd(action: str) -> None:
     try:
         subprocess.run(
@@ -45,12 +62,26 @@ def status() -> None:
 
 
 def update() -> None:
+    output = ""
+    stop = threading.Event()
+    t = threading.Thread(target=spinner, args=("Downloading tracks...", stop))
+    t.start()
     try:
-        subprocess.run(["uv", "run", str(DOWNLOADER)], check=True)
-        mpc("update", "--wait")
-        print("[*] Database rescanned")
-    except subprocess.CalledProcessError:
-        print("[!] Download failed")
+        output = _run_downloader()
+    except subprocess.CalledProcessError as e:
+        stop.set()
+        t.join()
+        print("\r[!] Download failed")
+        if e.stdout.strip():
+            print(e.stdout.strip())
+        return
+    stop.set()
+    t.join()
+    print("\r[*] Download complete")
+    if output:
+        print(output)
+    run_with_spinner("Rescanning database...", lambda: mpc("update", "--wait"))
+    print("\r[*] Database rescanned")
 
 
 def scan() -> None:
@@ -60,7 +91,6 @@ def scan() -> None:
 
 def init() -> None:
     mpc("clear")
-
     if STATE_FILE.exists():
         state = json.loads(STATE_FILE.read_text()).get("ids", {})
         file_index = {meta["file"]: meta["index"] for meta in state.values()}
@@ -69,12 +99,11 @@ def init() -> None:
         )
     else:
         tracks = sorted(MUSIC_DIR.glob("*.mp3"))
-
     for track in tracks:
         mpc("add", track.name)
-
     mpc("single", "off")
     mpc("play")
+    print(f"[*] Queue loaded: {len(tracks)} tracks")
 
 
 def random_toggle() -> None:
@@ -89,8 +118,7 @@ def clear() -> None:
     print("[*] Queue cleared")
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
+# CLI
 COMMANDS = {
     "--start": lambda: systemd("start"),
     "--stop": lambda: systemd("stop"),

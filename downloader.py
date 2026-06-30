@@ -151,10 +151,13 @@ def main() -> None:
     queue = [(i + 1, t) for i, t in enumerate(tracks) if str(t.id) not in state]
     print(f"[*] Total likes: {total}  |  Synced: {len(state)}  |  New: {len(queue)}")
 
-    if not queue:
-        return
+    if queue:
+        download_queue(queue, state, total)
 
-    download_queue(queue, state, total)
+    # Re-index all tracks so indices reflect current cloud order (no duplicates)
+    for i, track in enumerate(tracks):
+        state[str(track.id)]["index"] = i + 1
+    save_state(state)
     print("[*] Done.")
 
 

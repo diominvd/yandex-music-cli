@@ -3,6 +3,7 @@
 # dependencies = []
 # ///
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -39,11 +40,20 @@ def run_with_spinner(msg: str, fn) -> None:
         t.join()
 
 
-def _run_downloader() -> str:
-    result = subprocess.run(
-        ["uv", "run", str(DOWNLOADER)], check=True, capture_output=True, text=True
-    )
-    return result.stdout.strip()
+def _run_downloader(counter_ref: list) -> str:
+    lines = []
+    with subprocess.Popen(
+        ["uv", "run", str(DOWNLOADER)],
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as proc:
+        for line in proc.stdout:
+            lines.append(line)
+            if m := re.match(r"\[(\d+)/(\d+)\]", line):
+                counter_ref[0] = (int(m.group(1)), int(m.group(2)))
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, proc.args, output="".join(lines))
+    return "".join(lines).strip()
 
 
 # Commands
@@ -64,16 +74,17 @@ def status() -> None:
 def update() -> None:
     output = ""
     stop = threading.Event()
-    t = threading.Thread(target=spinner, args=("Downloading tracks...", stop))
+    counter_ref = [None]
+    t = threading.Thread(target=spinner, args=("Downloading tracks...", stop, counter_ref))
     t.start()
     try:
-        output = _run_downloader()
+        output = _run_downloader(counter_ref)
     except subprocess.CalledProcessError as e:
         stop.set()
         t.join()
         print("\r[!] Download failed")
-        if e.stdout.strip():
-            print(e.stdout.strip())
+        if e.output.strip():
+            print(e.output.strip())
         return
     stop.set()
     t.join()
